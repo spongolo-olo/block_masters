@@ -63,3 +63,28 @@ def test_api_lattice_place_block():
     assert blue_block is not None
     assert blue_block["color"] == "blue"
     assert blue_block["center"] == [2, 2, 2]
+
+def test_api_lattice_remove_block():
+    url = "http://localhost:8004/api/lattice/remove"
+    # First, place a block to delete
+    place_url = "http://localhost:8004/api/lattice/place"
+    payload = {
+        "coord": [0, 0, 0],
+        "face_direction": [1, 1, 1],
+        "color": "blue"
+    }
+    requests.post(place_url, json=payload, timeout=2)
+    
+    # Now, remove it
+    remove_payload = {"coord": [1, 1, 1]}
+    response = requests.delete(url, json=remove_payload, timeout=2)
+    assert response.status_code == 200
+    
+    # Verify it's gone from the lattice
+    get_url = "http://localhost:8004/api/lattice"
+    get_response = requests.get(get_url, timeout=2)
+    data = get_response.json()
+    
+    # Check that no block exists at [1, 1, 1]
+    for block in data:
+        assert block["coord"] != [1, 1, 1]

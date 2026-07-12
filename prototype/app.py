@@ -71,6 +71,23 @@ def place_block():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
+@app.route('/api/lattice/remove', methods=['DELETE'])
+def remove_block():
+    """Removes a block at the specified coordinate."""
+    data = request.get_json()
+    if not data or 'coord' not in data:
+        return jsonify({"error": "coord is required"}), 400
+        
+    coord_tuple = tuple(data['coord'])
+    
+    if coord_tuple in lattice_engine.get_blocks():
+        # Since we don't have a direct remove_block method in Lattice yet,
+        # we manually remove it from the underlying dict for the prototype.
+        lattice_engine.get_blocks().pop(coord_tuple)
+        return jsonify({"status": "success", "removed": list(coord_tuple)})
+    else:
+        return jsonify({"error": "Block not found at specified coordinate"}), 404
+
 @app.route('/api/lattice/reset', methods=['POST'])
 def reset_lattice():
     """Resets the lattice to just the single root block for testing."""

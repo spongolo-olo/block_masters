@@ -58,6 +58,11 @@
             border: 2px solid transparent;
             transition: transform 0.2s, border-color 0.2s;
             box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            user-select: none;
         }
         .color-swatch:hover {
             transform: scale(1.15);
@@ -80,6 +85,8 @@
             color: #aaa;
             pointer-events: none;
             box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+            white-space: nowrap;
+            text-align: center;
         }
     </style>
 </head>
@@ -88,18 +95,19 @@
         <div class="panel">
             <h1>Block Masters</h1>
             <p>Truncated Octahedron Lattice Prototype</p>
-            <div>Select Active Block Color:</div>
+            <div>Select Active Block Color / Tool:</div>
             <div class="color-selector" id="color-selector">
-                <div class="color-swatch active" style="background-color: #00ff88;" data-color="green"></div>
-                <div class="color-swatch" style="background-color: #ff3366;" data-color="red"></div>
-                <div class="color-swatch" style="background-color: #3399ff;" data-color="blue"></div>
-                <div class="color-swatch" style="background-color: #ffcc00;" data-color="gold"></div>
-                <div class="color-swatch" style="background-color: #b800ff;" data-color="purple"></div>
+                <div class="color-swatch active" style="background-color: #00ff88;" data-color="green" title="Emerald Green"></div>
+                <div class="color-swatch" style="background-color: #ff3366;" data-color="red" title="Crimson Red"></div>
+                <div class="color-swatch" style="background-color: #3399ff;" data-color="blue" title="Ocean Blue"></div>
+                <div class="color-swatch" style="background-color: #ffcc00;" data-color="gold" title="Gold"></div>
+                <div class="color-swatch" style="background-color: #b800ff;" data-color="purple" title="Royal Purple"></div>
+                <div class="color-swatch" style="background-color: #33333d; border: 1px solid rgba(255,255,255,0.25);" data-color="delete" title="Eraser (Delete Block)">🗑️</div>
             </div>
         </div>
     </div>
 
-    <div id="instructions">
+    <div id="instructions" id="instructions-bar">
         🖱️ Left Click + Drag to Rotate Camera | 🔍 Scroll to Zoom | 🧱 Click Face to Place Block
     </div>
 
@@ -125,6 +133,8 @@
             purple: 0xb800ff
         };
 
+        const instructionsEl = document.getElementById('instructions');
+
         // UI Color Selection setup
         const swatches = document.querySelectorAll('.color-swatch');
         swatches.forEach(swatch => {
@@ -132,6 +142,15 @@
                 swatches.forEach(s => s.classList.remove('active'));
                 swatch.classList.add('active');
                 activeColor = swatch.getAttribute('data-color');
+                
+                // Dynamically update instruction helper depending on tool selection
+                if (activeColor === 'delete') {
+                    instructionsEl.innerHTML = "🖱️ Left Click + Drag to Rotate Camera | 🔍 Scroll to Zoom | 🗑️ Click any Block to Delete it";
+                    instructionsEl.style.border = "1px solid rgba(255, 51, 102, 0.4)";
+                } else {
+                    instructionsEl.innerHTML = "🖱️ Left Click + Drag to Rotate Camera | 🔍 Scroll to Zoom | 🧱 Click Face to Place Block (Shift+Click to Delete)";
+                    instructionsEl.style.border = "1px solid rgba(255, 255, 255, 0.1)";
+                }
             });
         });
 
@@ -258,9 +277,9 @@
             });
         }
 
-        // Handle user clicks or taps to place blocks
+        // Handle user clicks or taps to place/delete blocks
         async function onCanvasClick(event) {
-            // Only trigger placement if click was directly on the canvas, not on UI overlays
+            // Only trigger placement/deletion if click was directly on the canvas, not on UI overlays
             if (event.target.tagName !== 'CANVAS') return;
 
             // Calculate mouse position in normalized device coordinates
@@ -275,16 +294,46 @@
             if (intersects.length > 0) {
                 const intersection = intersects[0];
                 const clickedMesh = intersection.object;
-                
-                // Retrieve clicked block coordinate
                 const clickedCoord = clickedMesh.userData.coord;
 
+                // Check for deletion mode (either active tool is "delete" or Shift key is pressed)
+                const isDeletionIntent = (activeColor === 'delete' || event.shiftKey);
+
+                if (isDeletionIntent) {
+                    // Prevent deleting the initial core block at (0,0,0) to avoid getting stuck in a blank scene
+                    if (clickedCoord[0] === 0 && clickedCoord[1] === 0 && clickedCoord[2] === 0) {
+                        alert("The core starting block at (0, 0, 0) cannot be deleted.");
+                        return;
+                    }
+
+                    console.log(`[Interaction] Attempting deletion of block: coord=${clickedCoord}`);
+
+                    try {
+                        const response = await fetch('/api/lattice/remove', {
+                            method: 'DELETE',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ coord: clickedCoord })
+                        });
+
+                        if (response.ok) {
+                            // Reload lattice to update the scene
+                            await loadLattice();
+                        } else {
+                            const errData = await response.json();
+                            console.error("Lattice removal error:", errData.error);
+                        }
+                    } catch (err) {
+                        console.error("Failed to connect to removal API:", err);
+                    }
+                    return;
+                }
+
+                // Place block mode:
                 // Calculate clicked normal vector in local space
                 const localNormal = intersection.face.normal.clone().normalize();
 
                 // Mathematical Maximum Dot Product Classifier:
                 // Compare the local normal to all 14 possible neighbor directions.
-                // The direction with the highest dot product is the exact clicked face.
                 const directions = [
                     // 6 Square Face offsets & normalized directions
                     { offset: [2, 0, 0], dir: [1, 0, 0] },
@@ -335,7 +384,6 @@
                     });
 
                     if (response.ok) {
-                        // Reload lattice to reflect new state
                         await loadLattice();
                     } else {
                         const errData = await response.json();
