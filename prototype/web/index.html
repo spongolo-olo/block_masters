@@ -107,7 +107,7 @@
         </div>
     </div>
 
-    <div id="instructions" id="instructions-bar">
+    <div id="instructions">
         🖱️ Left Click + Drag to Rotate Camera | 🔍 Scroll to Zoom | 🧱 Click Face to Place Block
     </div>
 
@@ -133,8 +133,6 @@
             purple: 0xb800ff
         };
 
-        const instructionsEl = document.getElementById('instructions');
-
         // UI Color Selection setup
         const swatches = document.querySelectorAll('.color-swatch');
         swatches.forEach(swatch => {
@@ -142,15 +140,6 @@
                 swatches.forEach(s => s.classList.remove('active'));
                 swatch.classList.add('active');
                 activeColor = swatch.getAttribute('data-color');
-                
-                // Dynamically update instruction helper depending on tool selection
-                if (activeColor === 'delete') {
-                    instructionsEl.innerHTML = "🖱️ Left Click + Drag to Rotate Camera | 🔍 Scroll to Zoom | 🗑️ Click any Block to Delete it";
-                    instructionsEl.style.border = "1px solid rgba(255, 51, 102, 0.4)";
-                } else {
-                    instructionsEl.innerHTML = "🖱️ Left Click + Drag to Rotate Camera | 🔍 Scroll to Zoom | 🧱 Click Face to Place Block (Shift+Click to Delete)";
-                    instructionsEl.style.border = "1px solid rgba(255, 255, 255, 0.1)";
-                }
             });
         });
 
@@ -279,7 +268,7 @@
 
         // Handle user clicks or taps to place/delete blocks
         async function onCanvasClick(event) {
-            // Only trigger placement/deletion if click was directly on the canvas, not on UI overlays
+            // Only trigger placement if click was directly on the canvas, not on UI overlays
             if (event.target.tagName !== 'CANVAS') return;
 
             // Calculate mouse position in normalized device coordinates
@@ -294,20 +283,14 @@
             if (intersects.length > 0) {
                 const intersection = intersects[0];
                 const clickedMesh = intersection.object;
+                
+                // Retrieve clicked block coordinate
                 const clickedCoord = clickedMesh.userData.coord;
 
-                // Check for deletion mode (either active tool is "delete" or Shift key is pressed)
-                const isDeletionIntent = (activeColor === 'delete' || event.shiftKey);
-
-                if (isDeletionIntent) {
-                    // Prevent deleting the initial core block at (0,0,0) to avoid getting stuck in a blank scene
-                    if (clickedCoord[0] === 0 && clickedCoord[1] === 0 && clickedCoord[2] === 0) {
-                        alert("The core starting block at (0, 0, 0) cannot be deleted.");
-                        return;
-                    }
-
-                    console.log(`[Interaction] Attempting deletion of block: coord=${clickedCoord}`);
-
+                // Check for block deletion (either Eraser tool or Shift + Click)
+                if (activeColor === 'delete' || event.shiftKey) {
+                    console.log(`[Interaction] Requesting deletion of block: coord=${clickedCoord}`);
+                    
                     try {
                         const response = await fetch('/api/lattice/remove', {
                             method: 'DELETE',
@@ -316,58 +299,62 @@
                         });
 
                         if (response.ok) {
-                            // Reload lattice to update the scene
                             await loadLattice();
                         } else {
                             const errData = await response.json();
-                            console.error("Lattice removal error:", errData.error);
+                            console.error("Lattice deletion error:", errData.error);
                         }
                     } catch (err) {
-                        console.error("Failed to connect to removal API:", err);
+                        console.error("Failed to connect to deletion API:", err);
                     }
                     return;
                 }
 
-                // Place block mode:
-                // Calculate clicked normal vector in local space
-                const localNormal = intersection.face.normal.clone().normalize();
+                // --- PLACEMENT MODE ---
+                // Convert world intersection point to local coordinate space of the clicked block
+                const localPoint = clickedMesh.worldToLocal(intersection.point.clone());
 
-                // Mathematical Maximum Dot Product Classifier:
-                // Compare the local normal to all 14 possible neighbor directions.
-                const directions = [
-                    // 6 Square Face offsets & normalized directions
-                    { offset: [2, 0, 0], dir: [1, 0, 0] },
-                    { offset: [-2, 0, 0], dir: [-1, 0, 0] },
-                    { offset: [0, 2, 0], dir: [0, 1, 0] },
-                    { offset: [0, -2, 0], dir: [0, -1, 0] },
-                    { offset: [0, 0, 2], dir: [0, 0, 1] },
-                    { offset: [0, 0, -2], dir: [0, 0, -1] },
-                    // 8 Hexagon Face offsets & normalized directions
-                    { offset: [1, 1, 1], dir: [1/Math.sqrt(3), 1/Math.sqrt(3), 1/Math.sqrt(3)] },
-                    { offset: [1, 1, -1], dir: [1/Math.sqrt(3), 1/Math.sqrt(3), -1/Math.sqrt(3)] },
-                    { offset: [1, -1, 1], dir: [1/Math.sqrt(3), -1/Math.sqrt(3), 1/Math.sqrt(3)] },
-                    { offset: [1, -1, -1], dir: [1/Math.sqrt(3), -1/Math.sqrt(3), -1/Math.sqrt(3)] },
-                    { offset: [-1, 1, 1], dir: [-1/Math.sqrt(3), 1/Math.sqrt(3), 1/Math.sqrt(3)] },
-                    { offset: [-1, 1, -1], dir: [-1/Math.sqrt(3), 1/Math.sqrt(3), -1/Math.sqrt(3)] },
-                    { offset: [-1, -1, 1], dir: [-1/Math.sqrt(3), -1/Math.sqrt(3), 1/Math.sqrt(3)] },
-                    { offset: [-1, -1, -1], dir: [-1/Math.sqrt(3), -1/Math.sqrt(3), -1/Math.sqrt(3)] }
+                // Face Snapping Centroids (6 square centroids/offsets & 8 hexagonal centroids/offsets)
+                const centroids = [
+                    // 6 Square Face centroids/offsets
+                    { offset: [2, 0, 0], center: [2, 0, 0] },
+                    { offset: [-2, 0, 0], center: [-2, 0, 0] },
+                    { offset: [0, 2, 0], center: [0, 2, 0] },
+                    { offset: [0, -2, 0], center: [0, -2, 0] },
+                    { offset: [0, 0, 2], center: [0, 0, 2] },
+                    { offset: [0, 0, -2], center: [0, 0, -2] },
+                    // 8 Hexagonal Face centroids/offsets
+                    { offset: [1, 1, 1], center: [1, 1, 1] },
+                    { offset: [1, 1, -1], center: [1, 1, -1] },
+                    { offset: [1, -1, 1], center: [1, -1, 1] },
+                    { offset: [1, -1, -1], center: [1, -1, -1] },
+                    { offset: [-1, 1, 1], center: [-1, 1, 1] },
+                    { offset: [-1, 1, -1], center: [-1, 1, -1] },
+                    { offset: [-1, -1, 1], center: [-1, -1, 1] },
+                    { offset: [-1, -1, -1], center: [-1, -1, -1] }
                 ];
 
-                let maxDot = -Infinity;
-                let bestDirection = null;
+                // Fitts's Law: Snaps to the mathematically closest centroid in 3D local space.
+                // This naturally expands the touch catchment area of small square faces.
+                let minDistance = Infinity;
+                let bestFace = null;
 
-                directions.forEach(d => {
-                    const dot = localNormal.x * d.dir[0] + localNormal.y * d.dir[1] + localNormal.z * d.dir[2];
-                    if (dot > maxDot) {
-                        maxDot = dot;
-                        bestDirection = d;
+                centroids.forEach(c => {
+                    const dist = Math.hypot(
+                        localPoint.x - c.center[0],
+                        localPoint.y - c.center[1],
+                        localPoint.z - c.center[2]
+                    );
+                    if (dist < minDistance) {
+                        minDistance = dist;
+                        bestFace = c;
                     }
                 });
 
-                const faceDirection = bestDirection.offset;
+                const faceDirection = bestFace.offset;
 
-                console.log(`[Interaction] Tapped mesh: coord=${clickedCoord}, faceNormal=(${localNormal.x.toFixed(3)}, ${localNormal.y.toFixed(3)}, ${localNormal.z.toFixed(3)})`);
-                console.log(`[Interaction] Classified direction: offset=${faceDirection}, dot=${maxDot.toFixed(3)}`);
+                console.log(`[Interaction] Tapped mesh: coord=${clickedCoord}, localPoint=(${localPoint.x.toFixed(3)}, ${localPoint.y.toFixed(3)}, ${localPoint.z.toFixed(3)})`);
+                console.log(`[Interaction] Snapped face direction: offset=${faceDirection}, dist=${minDistance.toFixed(3)}`);
 
                 // Send placement request to Flask server
                 const payload = {
