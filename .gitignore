@@ -1,0 +1,6 @@
+.pytest_cache/
+__pycache__/
+*.pyc
+*.log
+.spirit_context.json
+browser_screenshot.png
